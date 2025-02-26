@@ -30,24 +30,23 @@ class NumpyMacenkoNormalizer(HENormalizer):
 
         phi = np.arctan2(That[:, 1], That[:, 0])
 
-        minPhi = np.percentile(phi, alpha)
-        maxPhi = np.percentile(phi, 100 - alpha)
+        minPhi, maxPhi = np.percentile(phi, (100, 100 - alpha))
 
-        vMin = eigvecs[:, 1:3].dot(np.array([(np.cos(minPhi), np.sin(minPhi))]).T)
-        vMax = eigvecs[:, 1:3].dot(np.array([(np.cos(maxPhi), np.sin(maxPhi))]).T)
+        vMin = eigvecs[:, 1:3].dot(np.array([[np.cos(minPhi)], [np.sin(minPhi)]]))
+        vMax = eigvecs[:, 1:3].dot(np.array([[np.cos(maxPhi)], [np.sin(maxPhi)]]))
 
         # a heuristic to make the vector corresponding to hematoxylin first and the
         # one corresponding to eosin second
         if vMin[0] > vMax[0]:
-            HE = np.array((vMin[:, 0], vMax[:, 0])).T
+            HE = np.column_stack((vMin[:, 0], vMax[:, 0]))
         else:
-            HE = np.array((vMax[:, 0], vMin[:, 0])).T
+            HE = np.column_stack((vMax[:, 0], vMin[:, 0]))
 
         return HE
 
     def __find_concentration(self, OD, HE):
         # rows correspond to channels (RGB), columns to OD values
-        Y = np.reshape(OD, (-1, 3)).T
+        Y = np.reshape(OD, (3, -1))
 
         # determine concentrations of the individual stains
         C = np.linalg.lstsq(HE, Y, rcond=None)[0]
@@ -60,7 +59,7 @@ class NumpyMacenkoNormalizer(HENormalizer):
         OD, ODhat = self.__convert_rgb2od(I, Io=Io, beta=beta)
 
         # compute eigenvectors
-        _, eigvecs = np.linalg.eigh(np.cov(ODhat.T))
+        _, eigvecs = np.linalg.eigh(np.cov(ODhat, rowvar=False))
 
         HE = self.__find_HE(ODhat, eigvecs, alpha)
 
@@ -106,7 +105,7 @@ class NumpyMacenkoNormalizer(HENormalizer):
 
         # recreate the image using reference mixing matrix
         Inorm = np.multiply(Io, np.exp(-self.HERef.dot(C2)))
-        Inorm[Inorm > 255] = 255
+        np.clip(Inorm, 0, 255, out=Inorm)
         Inorm = np.reshape(Inorm.T, (h, w, c)).astype(np.uint8)
 
         H, E = None, None
@@ -114,11 +113,11 @@ class NumpyMacenkoNormalizer(HENormalizer):
         if stains:
             # unmix hematoxylin and eosin
             H = np.multiply(Io, np.exp(np.expand_dims(-self.HERef[:, 0], axis=1).dot(np.expand_dims(C2[0, :], axis=0))))
-            H[H > 255] = 255
+            np.clip(H, 0, 255, out=H)
             H = np.reshape(H.T, (h, w, c)).astype(np.uint8)
 
             E = np.multiply(Io, np.exp(np.expand_dims(-self.HERef[:, 1], axis=1).dot(np.expand_dims(C2[1, :], axis=0))))
-            E[E > 255] = 255
+            np.clip(E, 0, 255, out=E)
             E = np.reshape(E.T, (h, w, c)).astype(np.uint8)
 
         return Inorm, H, E
