@@ -31,28 +31,25 @@ class NumpyMacenkoAugmentor(HEAugmentor):
     def __find_HE(self, ODhat, eigvecs, alpha):
         #project on the plane spanned by the eigenvectors corresponding to the two
         # largest eigenvalues
-        That = ODhat.dot(eigvecs[:,1:3])
+        That = ODhat @ eigvecs[:,1:3]
 
         phi = np.arctan2(That[:,1],That[:,0])
 
-        minPhi = np.percentile(phi, alpha)
-        maxPhi = np.percentile(phi, 100-alpha)
+        minPhi, maxPhi = np.percentile(phi, (alpha, 100-alpha))
 
-        vMin = eigvecs[:, 1:3].dot(np.array([(np.cos(minPhi), np.sin(minPhi))]).T)
-        vMax = eigvecs[:, 1:3].dot(np.array([(np.cos(maxPhi), np.sin(maxPhi))]).T)
+
+        cos_sin = np.array([[np.cos(minPhi), np.cos(maxPhi)], [np.sin(minPhi), np.sin(maxPhi)]])
+        V = eigvecs[:, 1:3] @ cos_sin
 
         # a heuristic to make the vector corresponding to hematoxylin first and the
         # one corresponding to eosin second
-        if vMin[0] > vMax[0]:
-            HE = np.array((vMin[:,0], vMax[:,0])).T
-        else:
-            HE = np.array((vMax[:,0], vMin[:,0])).T
+        HE = V[:, ::-1] if V[0, 0] > V[0, 1] else V
 
         return HE
 
     def __find_concentration(self, OD, HE):
         # rows correspond to channels (RGB), columns to OD values
-        Y = np.reshape(OD, (-1, 3)).T
+        Y = np.reshape(OD, (3, -1))
 
         # determine concentrations of the individual stains
         C = np.linalg.lstsq(HE, Y, rcond=None)[0]
@@ -65,14 +62,14 @@ class NumpyMacenkoAugmentor(HEAugmentor):
         OD, ODhat = self.__convert_rgb2od(I, Io=Io, beta=beta)
 
         # compute eigenvectors
-        _, eigvecs = np.linalg.eigh(np.cov(ODhat.T))
+        _, eigvecs = np.linalg.eigh(np.cov(ODhat, rowvar=False))
 
         HE = self.__find_HE(ODhat, eigvecs, alpha)
 
         C = self.__find_concentration(OD, HE)
 
         # normalize stain concentrations
-        maxC = np.array([np.percentile(C[0,:], 99), np.percentile(C[1,:], 99)])
+        maxC = np.percentile(C[:2, :], 99, axis=1)
 
         return HE, C, maxC
 
@@ -101,8 +98,8 @@ class NumpyMacenkoAugmentor(HEAugmentor):
             C2[i, :] += np.random.uniform(-self.sigma2, self.sigma2)  # additative
 
         # recreate the image using reference mixing matrix
-        Iaug = np.multiply(Io, np.exp(-self.HERef.dot(C2)))
-        Iaug[Iaug > 255] = 255
+        Iaug = np.multiply(Io, np.exp(-self.HERef @ C2))
+        np.clip(Iaug, 0, 255, out=Iaug)
         Iaug = np.reshape(Iaug.T, (h, w, c)).astype(np.uint8)
 
         return Iaug
